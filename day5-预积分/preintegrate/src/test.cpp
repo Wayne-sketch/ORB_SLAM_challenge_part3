@@ -40,7 +40,7 @@ int ComputeMeasurements(const std::vector<double> & picture_stamps, const std::v
     {
         MeasureGroup preintegration_data_temp;//单独一个预积分量所包含的数据
         //根据前后两帧图像的时间戳获取相应的imu数据
-        std::vector<ImuData> imudata_tmp;//改变量防止已经查询过的重复查询
+        std::vector<ImuData> imudata_tmp;//改变first_imu_id防止已经查询过的重复查询
         for(size_t j = first_imu_id; j < imudatas.size(); j++)
         {
             first_imu_id++;
@@ -48,6 +48,7 @@ int ComputeMeasurements(const std::vector<double> & picture_stamps, const std::v
             {
                 continue;
             }
+            //imu时间戳在两帧图像之间的全插入进来
             else if(imudatas[j].stamp < picture_stamps[i + 1])//时间符合要求，存入
             {
                 imudata_tmp.push_back(imudatas[j]);
@@ -61,6 +62,7 @@ int ComputeMeasurements(const std::vector<double> & picture_stamps, const std::v
         }
 
         //计算加速度和速度
+        // 不算最后一个符合时间要求的imu数据
         int n = imudata_tmp.size() - 1;
         for(size_t k = 0; k < n; k++)
         {
@@ -71,31 +73,41 @@ int ComputeMeasurements(const std::vector<double> & picture_stamps, const std::v
             {
                 double t = imudata_tmp[k + 1].stamp - imudata_tmp[k].stamp;//单帧imu时间间隔
                 double t_picture = imudata_tmp[k].stamp - picture_stamps[i];//第一帧imu数据到图像间隔
-
+                
                 //*******************补全下面代码*********************//
-                acc =
-                w = 
-                t_step = 
+                //用上一图像帧到下一imu帧中值积分
+                acc = (imudata_tmp[k].acc_+imudata_tmp[k+1].acc_-
+                        (imudata_tmp[k+1].acc_-imudata_tmp[k].acc_)*(t_picture/t))*0.5f;
+                w = (imudata_tmp[k].omega_+imudata_tmp[k+1].omega_-
+                        (imudata_tmp[k+1].omega_-imudata_tmp[k].omega_)*(t_picture/t))*0.5f;
+                //上一图像帧的t到下一imu帧的t
+                t_step = imudata_tmp[k+1].stamp-picture_stamps[i];
             }
             else if(k < (n - 1))
             {
             	//*******************补全下面代码*********************//
-                acc = 
-                w = 
-                t_step = 
+                // 中间的数据不存在帧的干扰，正常计算
+                acc = (imudata_tmp[k].acc_+imudata_tmp[k+1].acc_)*0.5f;
+                w = (imudata_tmp[k].omega_+imudata_tmp[k+1].omega_)*0.5f;
+                t_step = imudata_tmp[k+1].stamp-imudata_tmp[k].stamp;
             }
             else if((k > 0) && (k == (n - 1)))
             {
                 double t = imudata_tmp[k + 1].stamp - imudata_tmp[k].stamp;//单帧imu时间间隔
                 double t_picture = imudata_tmp[k + 1].stamp - picture_stamps[i+1];
                 //*******************补全下面代码*********************//
-                acc = 
-                w = 
-                t_step = 
+                // 直到倒数第二个imu时刻时，计算过程跟第一时刻类似，都需要考虑帧与imu时刻的关系
+                acc = (imudata_tmp[i].acc_+imudata_tmp[i+1].acc_-
+                    (imudata_tmp[i+1].acc_-imudata_tmp[i].acc_)*(t_picture/t))*0.5f;
+                w = (imudata_tmp[i].omega_+imudata_tmp[i+1].omega_-
+                    (imudata_tmp[i+1].omega_-imudata_tmp[i].omega_)*(t_picture/t))*0.5f;
+                t_step = picture_stamps[i+1]-imudata_tmp[i].stamp;
             }
             //*******************补全下面3行代码*********************//
             // 记录IMU数据计算出来的加速度，角速度，时间间隔
-            
+            preintegration_data_temp.acc_group.push_back(acc);
+            preintegration_data_temp.omega_group.push_back(w);
+            preintegration_data_temp.delta_t.push_back(t_step);
         }
         preintegration_data_temp.imu_data_size = n;//两帧图像之间imu数据数量
         preintegration_data_temp.picture_cur_stamp = picture_stamps[i];//第一张图像的时间戳
@@ -117,7 +129,9 @@ int main(void)
     infile.open(picture_stamp_path);
     while(infile >> temp)
     {
+        //ns转化成s
         temp = temp / 1e9;
+        //存图像时间戳
         picture_stamp_.push_back(temp);
         //cout << std::setprecision(13) << temp << endl;
     }
